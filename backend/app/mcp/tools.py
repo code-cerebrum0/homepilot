@@ -383,13 +383,24 @@ def _solar_generation_text(data: dict) -> str:
 def _opportunities(ctx: ToolContext, _: dict) -> dict:
     d = build_dashboard(ctx.db, ctx.household_id, 7, ctx.now)
     if not d.opportunities:
-        return {"has_data": False}
+        return {
+            "has_data": False,
+            "checked": "overnight standby (02:00–05:00, >50 W, on ≥3 of last 7 nights)",
+            "interpretation": (
+                "No device was found drawing significant power overnight on most nights. "
+                "This check does not cover daytime usage or overall consumption levels."
+            ),
+        }
     return {"has_data": True, "opportunities": [o.model_dump() for o in d.opportunities]}
 
 
 def _opportunities_text(data: dict) -> str:
     if not data.get("has_data"):
-        return "No savings opportunities were found in the recorded readings."
+        return (
+            "No overnight standby waste was detected (checked for devices drawing >50 W "
+            "between 02:00–05:00 on at least 3 of the last 7 nights). "
+            + data.get("interpretation", "")
+        )
     ops = data.get("opportunities", [])
     if not ops:
         return "No savings opportunities were found."
@@ -399,6 +410,120 @@ def _opportunities_text(data: dict) -> str:
     if rest > 0:
         base += f" There are {rest} more suggestion{'s' if rest > 1 else ''} in the full results."
     return base.strip()
+
+
+def _tariff_info(ctx: ToolContext, _: dict) -> dict:
+    """Return the household's configured electricity tariff."""
+    from sqlalchemy import select as _select
+    from app.models import Tariff
+    tariff = ctx.db.scalar(_select(Tariff).where(Tariff.household_id == ctx.household_id))
+    if tariff is None:
+        return {"has_data": False, "message": "No tariff has been configured for this household."}
+    result: dict = {
+        "has_data": True,
+        "name": tariff.name,
+        "currency": tariff.currency,
+        "type": tariff.type,
+        "fixed_monthly_charge": tariff.fixed_monthly_charge,
+        "tax_percent": tariff.tax_percent,
+    }
+    if tariff.type == "flat":
+        result["flat_rate_per_kwh"] = tariff.flat_rate_per_kwh
+    elif tariff.type == "slab":
+        result["slabs"] = tariff.slabs
+    elif tariff.type == "time_of_use":
+        result["tou_periods"] = tariff.tou_periods
+    return result
+
+
+def _tariff_info_text(data: dict) -> str:
+    if not data.get("has_data"):
+        return "No tariff is configured for this household."
+    currency = data.get("currency", "")
+    name = data.get("name", "")
+    kind = data.get("type", "")
+    parts = [f"Tariff: {name} ({currency}, {kind})"]
+    if kind == "flat":
+        parts.append(f"Rate: {data.get('flat_rate_per_kwh'):.4g} {currency}/kWh")
+    elif kind == "slab":
+        slabs = data.get("slabs") or []
+        for i, s in enumerate(slabs):
+            limit = f"up to {s['up_to_kwh']} kWh" if s.get("up_to_kwh") else "above previous slab"
+            parts.append(f"Slab {i+1}: {limit} at {s['rate_per_kwh']:.4g} {currency}/kWh")
+    elif kind == "time_of_use":
+        for p in data.get("tou_periods") or []:
+            parts.append(f"{p['start']}–{p['end']}: {p['rate_per_kwh']:.4g} {currency}/kWh")
+    fixed = data.get("fixed_monthly_charge", 0)
+    tax = data.get("tax_percent", 0)
+    if fixed:
+        parts.append(f"Fixed monthly charge: {fixed:.2f} {currency}")
+    if tax:
+        parts.append(f"Tax: {tax:g}%")
+    return ". ".join(parts) + "."
+
+
+def _household_context(ctx: ToolContext, _: dict) -> dict:
+    """Return a summary of household devices and data coverage."""
+    from sqlalchemy import func as _func
+    from sqlalchemy import select as _select
+    from app.models import Device, Reading
+    from app.services import usage as _usage
+
+    devices = ctx.db.execute(
+        _select(Device.id, Device.name, Device.kind, Device.status, Device.source, Device.last_seen_at)
+        .where(Device.household_id == ctx.household_id, Device.deleted_at.is_(None))
+    ).all()
+
+    if not devices:
+        return {"has_data": False, "message": "No devices are registered for this household."}
+
+    device_list = [
+        {
+            "name": row.name,
+            "kind": row.kind,
+            "status": row.status,
+            "source": row.source,
+            "last_seen_at": iso_z(row.last_seen_at) if row.last_seen_at else None,
+        }
+        for row in devices
+    ]
+
+    has_solar = any(d.kind == "generator" for d in devices)
+
+    # Determine data coverage window
+    earliest_q = ctx.db.scalar(
+        _select(_func.min(Reading.measured_at))
+        .select_from(Reading)
+        .join(Device, Device.id == Reading.device_id)
+        .where(Device.household_id == ctx.household_id, Device.deleted_at.is_(None))
+    )
+    latest_q = _usage.last_reading_at(ctx.db, ctx.household_id)
+
+    return {
+        "has_data": True,
+        "device_count": len(device_list),
+        "has_solar": has_solar,
+        "devices": device_list,
+        "data_from": iso_z(earliest_q) if earliest_q else None,
+        "data_until": iso_z(latest_q) if latest_q else None,
+    }
+
+
+def _household_context_text(data: dict) -> str:
+    if not data.get("has_data"):
+        return "No devices are registered for this household."
+    n = data["device_count"]
+    solar = " including solar generation" if data.get("has_solar") else ""
+    names = [d["name"] for d in data.get("devices", [])]
+    device_str = ", ".join(names[:5])
+    if len(names) > 5:
+        device_str += f" and {len(names) - 5} more"
+    frm = data.get("data_from", "unknown")
+    until = data.get("data_until", "unknown")
+    return (
+        f"This household has {n} device{'s' if n != 1 else ''}{solar}: {device_str}. "
+        f"Readings are available from {frm} to {until}."
+    )
 
 
 # ─── Tool registry ────────────────────────────────────────────────────────────
@@ -532,6 +657,30 @@ TOOLS: dict[str, McpTool] = {
             handler=_solar_generation,
             label_fn=lambda a: f"solar generation last {a.get('days')} days",
         ),
+        McpTool(
+            name="get_tariff_info",
+            title="Tariff Information",
+            description=(
+                "Get the household's configured electricity tariff: type (flat/slab/time_of_use), "
+                "rate(s), currency, fixed monthly charge, and tax. "
+                "Call this before answering any question about cost, savings, or tariff comparison."
+            ),
+            input_schema=_empty_schema(),
+            handler=_tariff_info,
+            label_fn=lambda _: "tariff information",
+        ),
+        McpTool(
+            name="get_household_context",
+            title="Household Context",
+            description=(
+                "Get the list of registered devices (name, kind, status, source) and the date "
+                "range of available readings. Call this to understand what appliances are tracked "
+                "and how much historical data is available before making recommendations."
+            ),
+            input_schema=_empty_schema(),
+            handler=_household_context,
+            label_fn=lambda _: "household devices and data coverage",
+        ),
     ]
 }
 
@@ -544,6 +693,8 @@ _TEXT_RENDERERS: dict[str, Callable[[dict], str]] = {
     "get_cost_estimate": _cost_text,
     "get_savings_opportunities": _opportunities_text,
     "get_solar_generation": _solar_generation_text,
+    "get_tariff_info": _tariff_info_text,
+    "get_household_context": _household_context_text,
 }
 
 

@@ -412,6 +412,8 @@ def test_modern_tools_list(client):
         "get_cost_estimate",
         "get_savings_opportunities",
         "get_solar_generation",
+        "get_tariff_info",
+        "get_household_context",
     }
     for t in tools:
         assert t["annotations"]["readOnlyHint"] is True
@@ -617,7 +619,7 @@ def test_legacy_initialize_tools_list_call(client):
                      headers={**bearer, "MCP-Protocol-Version": PROTO_LEGACY})
     assert r2.status_code == 200
     tools = r2.json()["result"]["tools"]
-    assert len(tools) == 7
+    assert len(tools) == 9
 
     # tools/call
     r3 = client.post("/mcp/v1",
@@ -1026,3 +1028,384 @@ def test_compare_tool_label(client):
     assert result["isError"] is False
     label = result["_meta"].get("homepilot/label", "")
     assert "today" in label.lower() or "yesterday" in label.lower()
+
+
+# ─── New tools: get_tariff_info and get_household_context ────────────────────
+
+
+def test_get_tariff_info_no_tariff(client):
+    me = register(client)
+    ci = _register_client()
+    tokens = _full_oauth_flow(client, me, ci)
+    tok = tokens["access_token"]
+
+    r = client.post("/mcp/v1",
+                    json=_modern_body("tools/call", {"name": "get_tariff_info", "arguments": {}}),
+                    headers=_auth_headers(tok, "tools/call", "get_tariff_info"))
+    assert r.status_code == 200
+    result = r.json()["result"]
+    assert result["isError"] is False
+    assert result["structuredContent"]["has_data"] is False
+    assert "No tariff" in result["content"][0]["text"]
+
+
+def test_get_tariff_info_with_tariff(client):
+    me = register(client)
+    hid = me["memberships"][0]["household_id"]
+    # create tariff
+    t = {"name": "Test tariff", "currency": "INR", "type": "flat", "flat_rate_per_kwh": 7.0,
+         "fixed_monthly_charge": 100.0, "tax_percent": 5.0}
+    r_t = client.put(f"{API}/households/{hid}/tariff", json=t, headers=csrf(client))
+    assert r_t.status_code == 200
+
+    ci = _register_client()
+    tokens = _full_oauth_flow(client, me, ci)
+    tok = tokens["access_token"]
+
+    r = client.post("/mcp/v1",
+                    json=_modern_body("tools/call", {"name": "get_tariff_info", "arguments": {}}),
+                    headers=_auth_headers(tok, "tools/call", "get_tariff_info"))
+    assert r.status_code == 200
+    result = r.json()["result"]
+    assert result["isError"] is False
+    sc = result["structuredContent"]
+    assert sc["has_data"] is True
+    assert sc["currency"] == "INR"
+    assert sc["type"] == "flat"
+    assert sc["flat_rate_per_kwh"] == 7.0
+    assert sc["tax_percent"] == 5.0
+    # text should mention the rate
+    text = result["content"][0]["text"]
+    assert "7" in text and "INR" in text
+
+
+def test_get_household_context_no_devices(client):
+    me = register(client)
+    ci = _register_client()
+    tokens = _full_oauth_flow(client, me, ci)
+    tok = tokens["access_token"]
+
+    r = client.post("/mcp/v1",
+                    json=_modern_body("tools/call", {"name": "get_household_context", "arguments": {}}),
+                    headers=_auth_headers(tok, "tools/call", "get_household_context"))
+    assert r.status_code == 200
+    result = r.json()["result"]
+    assert result["isError"] is False
+    assert result["structuredContent"]["has_data"] is False
+
+
+def test_get_household_context_with_devices(client):
+    me = register(client)
+    hid = me["memberships"][0]["household_id"]
+    dev = _make_device(client, hid)
+    _ingest(client, dev)
+
+    ci = _register_client()
+    tokens = _full_oauth_flow(client, me, ci)
+    tok = tokens["access_token"]
+
+    r = client.post("/mcp/v1",
+                    json=_modern_body("tools/call", {"name": "get_household_context", "arguments": {}}),
+                    headers=_auth_headers(tok, "tools/call", "get_household_context"))
+    assert r.status_code == 200
+    result = r.json()["result"]
+    assert result["isError"] is False
+    sc = result["structuredContent"]
+    assert sc["has_data"] is True
+    assert sc["device_count"] == 1
+    assert sc["has_solar"] is False
+    assert sc["devices"][0]["name"] == "Test Device"
+    assert sc["data_from"] is not None
+    assert sc["data_until"] is not None
+    # text should mention the device
+    text = result["content"][0]["text"]
+    assert "Test Device" in text
+
+
+def test_household_context_tenant_isolation(client):
+    """Household context for user B must not return user A's devices."""
+    me_a = register(client)
+    hid_a = me_a["memberships"][0]["household_id"]
+    _make_device(client, hid_a)
+
+    client_b = make_client()
+    with client_b as cb:
+        me_b = register(cb)
+        ci_b = _register_client()
+        tokens_b = _full_oauth_flow(cb, me_b, ci_b)
+        tok_b = tokens_b["access_token"]
+
+        r = cb.post("/mcp/v1",
+                    json=_modern_body("tools/call", {"name": "get_household_context", "arguments": {}}),
+                    headers=_auth_headers(tok_b, "tools/call", "get_household_context"))
+        assert r.status_code == 200
+        sc = r.json()["result"]["structuredContent"]
+        # B has no devices — must not see A's
+        assert sc["has_data"] is False
+
+
+# ─── Text-form tool-call compatibility layer ──────────────────────────────────
+
+
+def test_text_form_tool_call_valid(client, monkeypatch):
+    """Model emits a JSON block in plain text → assistant executes it via MCP."""
+    me = register(client)
+    hid = me["memberships"][0]["household_id"]
+    dev = _make_device(client, hid)
+    _ingest(client, dev)
+
+    calls = {"n": 0}
+
+    def fake_completion(messages, tools):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # Emit a tool-call proposal as plain text (no native tool_calls)
+            return {
+                "role": "assistant",
+                "content": 'Let me check.\n```json\n{"name": "get_current_usage", "arguments": {}}\n```',
+            }
+        # Second round: confirm tool result was passed back
+        tool_msgs = [m for m in messages if m["role"] == "tool"]
+        assert len(tool_msgs) == 1
+        assert '"has_data"' in tool_msgs[0]["content"]
+        return {"role": "assistant", "content": "Your home is consuming electricity right now."}
+
+    monkeypatch.setattr("app.ai.chat.chat_completion", fake_completion)
+    r = client.post(f"{API}/households/{hid}/chat",
+                    json={"message": "How much power now?"},
+                    headers=csrf(client))
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["reply"] == "Your home is consuming electricity right now."
+    # The text-form call should have been executed
+    assert len(j["tool_calls"]) == 1
+    assert j["tool_calls"][0]["name"] == "get_current_usage"
+    assert j["tool_calls"][0]["status"] == "success"
+
+
+def test_text_form_unknown_tool_ignored(client, monkeypatch):
+    """Unknown tool name in plain text JSON → ignored, no execution."""
+    me = register(client)
+    hid = me["memberships"][0]["household_id"]
+
+    calls = {"n": 0}
+
+    def fake_completion(messages, tools):
+        calls["n"] += 1
+        # Model emits a JSON block with an unknown tool name
+        return {
+            "role": "assistant",
+            "content": '```json\n{"name": "exec_shell", "arguments": {"cmd": "rm -rf /"}}\n```',
+        }
+
+    monkeypatch.setattr("app.ai.chat.chat_completion", fake_completion)
+    r = client.post(f"{API}/households/{hid}/chat",
+                    json={"message": "do something"},
+                    headers=csrf(client))
+    assert r.status_code == 200
+    j = r.json()
+    # No tool calls executed — unknown tool rejected
+    assert j["tool_calls"] == []
+
+
+def test_text_form_invalid_args_rejected(client, monkeypatch):
+    """Valid tool name but schema-invalid args → call rejected, no execution."""
+    me = register(client)
+    hid = me["memberships"][0]["household_id"]
+
+    calls = {"n": 0}
+
+    def fake_completion(messages, tools):
+        calls["n"] += 1
+        return {
+            "role": "assistant",
+            "content": '```json\n{"name": "get_daily_usage", "arguments": {"days": "not_an_integer"}}\n```',
+        }
+
+    monkeypatch.setattr("app.ai.chat.chat_completion", fake_completion)
+    r = client.post(f"{API}/households/{hid}/chat",
+                    json={"message": "show me usage"},
+                    headers=csrf(client))
+    assert r.status_code == 200
+    j = r.json()
+    # Invalid args → no tool executed
+    assert j["tool_calls"] == []
+
+
+def test_text_form_deduplication(client, monkeypatch):
+    """Same tool name appearing twice in one text response → executed only once."""
+    me = register(client)
+    hid = me["memberships"][0]["household_id"]
+    dev = _make_device(client, hid)
+    _ingest(client, dev)
+
+    calls = {"n": 0}
+
+    def fake_completion(messages, tools):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # Two identical tool call blocks
+            return {
+                "role": "assistant",
+                "content": (
+                    '```json\n{"name": "get_current_usage", "arguments": {}}\n```\n'
+                    '```json\n{"name": "get_current_usage", "arguments": {}}\n```'
+                ),
+            }
+        return {"role": "assistant", "content": "Done."}
+
+    monkeypatch.setattr("app.ai.chat.chat_completion", fake_completion)
+    r = client.post(f"{API}/households/{hid}/chat",
+                    json={"message": "check power"},
+                    headers=csrf(client))
+    assert r.status_code == 200
+    j = r.json()
+    # Deduplication: only one call despite two identical blocks
+    assert len(j["tool_calls"]) == 1
+
+
+def test_text_form_malformed_json_ignored(client, monkeypatch):
+    """Malformed JSON in a code block → not executed, response returned as-is."""
+    me = register(client)
+    hid = me["memberships"][0]["household_id"]
+
+    def fake_completion(messages, tools):
+        return {
+            "role": "assistant",
+            "content": '```json\n{not valid json at all```',
+        }
+
+    monkeypatch.setattr("app.ai.chat.chat_completion", fake_completion)
+    r = client.post(f"{API}/households/{hid}/chat",
+                    json={"message": "hi"},
+                    headers=csrf(client))
+    assert r.status_code == 200
+    assert r.json()["tool_calls"] == []
+
+# ─── Streaming chat endpoint ──────────────────────────────────────────────────
+
+
+def _parse_sse(body: str) -> list[dict]:
+    """Parse an SSE body into a list of {event, data} dicts."""
+    events = []
+    for frame in body.split("\n\n"):
+        if not frame.strip():
+            continue
+        event_name = "message"
+        data_line = ""
+        for line in frame.split("\n"):
+            if line.startswith("event: "):
+                event_name = line[7:].strip()
+            elif line.startswith("data: "):
+                data_line = line[6:].strip()
+        if data_line:
+            import json as _json
+            try:
+                events.append({"event": event_name, "data": _json.loads(data_line)})
+            except Exception:
+                pass
+    return events
+
+
+def test_chat_stream_sse_events(client, monkeypatch):
+    """Streaming endpoint emits tool, token, and done SSE events."""
+    me = register(client)
+    hid = me["memberships"][0]["household_id"]
+    dev = _make_device(client, hid)
+    _ingest(client, dev)
+
+    calls = {"n": 0}
+
+    def fake_completion(messages, tools):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"function": {"name": "get_current_usage", "arguments": {}}}],
+            }
+        return {"role": "assistant", "content": "Streaming done."}
+
+    import json as _json
+
+    def fake_stream(messages):
+        # yield two tokens
+        yield "Hello "
+        yield "world."
+
+    monkeypatch.setattr("app.ai.chat.chat_completion", fake_completion)
+    monkeypatch.setattr("app.ai.chat.chat_completion_stream", fake_stream)
+
+    r = client.post(
+        f"{API}/households/{hid}/chat/stream",
+        json={"message": "How much power?"},
+        headers=csrf(client),
+    )
+    assert r.status_code == 200, r.text
+    assert "text/event-stream" in r.headers.get("content-type", "")
+
+    events = _parse_sse(r.text)
+    event_types = [e["event"] for e in events]
+
+    # Must have at least one tool event, at least one token event, and a done event
+    assert "tool" in event_types, f"No tool event in {event_types}"
+    assert "token" in event_types, f"No token event in {event_types}"
+    assert "done" in event_types, f"No done event in {event_types}"
+
+    # Check tool event contains name and status
+    tool_events = [e["data"] for e in events if e["event"] == "tool"]
+    assert any(t["name"] == "get_current_usage" for t in tool_events)
+
+    # Check tokens combine to the streamed reply
+    tokens = "".join(e["data"]["text"] for e in events if e["event"] == "token")
+    assert tokens == "Hello world."
+
+    # Check done event has conversation_id and tool_calls
+    done = next(e["data"] for e in events if e["event"] == "done")
+    assert "conversation_id" in done
+    assert isinstance(done["tool_calls"], list)
+    assert done["tool_calls"][0]["name"] == "get_current_usage"
+    assert done["tool_calls"][0]["status"] == "success"
+
+
+def test_chat_stream_tenant_isolation(client):
+    """Streaming endpoint rejects cross-household access."""
+    me = register(client)
+    hid = me["memberships"][0]["household_id"]
+
+    other = make_client()
+    with other as ob:
+        register(ob, "Eve")
+        r = ob.post(
+            f"{API}/households/{hid}/chat/stream",
+            json={"message": "hi"},
+            headers=csrf(ob),
+        )
+        assert r.status_code == 404
+
+
+def test_chat_stream_rate_limit_shares_with_chat(client, monkeypatch):
+    """The streaming endpoint shares the same rate-limit key as /chat."""
+    from app.config import get_settings
+    from app.rate_limit import chat_limiter
+
+    me = register(client)
+    hid = me["memberships"][0]["household_id"]
+
+    # Exhaust the limit via the non-streaming endpoint
+    monkeypatch.setattr(get_settings(), "chat_rate_limit_per_minute", 1, raising=False)
+
+    def fake_completion(messages, tools):
+        return {"role": "assistant", "content": "ok"}
+
+    monkeypatch.setattr("app.ai.chat.chat_completion", fake_completion)
+
+    # First request should succeed
+    r1 = client.post(f"{API}/households/{hid}/chat",
+                     json={"message": "hi"}, headers=csrf(client))
+    assert r1.status_code == 200
+
+    # Second request (streaming) should be rate-limited
+    r2 = client.post(f"{API}/households/{hid}/chat/stream",
+                     json={"message": "hi"}, headers=csrf(client))
+    assert r2.status_code == 429
