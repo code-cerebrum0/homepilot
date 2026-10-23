@@ -17,8 +17,9 @@ from pydantic import (
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
-DeviceSource = Literal["simulated", "smart_plug", "home_assistant", "mqtt", "local_api"]
+DeviceSource = Literal["simulated", "smart_plug", "home_assistant", "mqtt", "local_api", "solar_inverter"]
 DeviceStatus = Literal["active", "disabled"]
+DeviceKind = Literal["consumer", "generator"]
 
 
 # ---------- auth / users ----------
@@ -55,6 +56,7 @@ class DeviceCreateIn(BaseModel):
     household_id: int
     name: Name
     source: DeviceSource
+    kind: DeviceKind = "consumer"
 
 
 class DevicePatchIn(BaseModel):
@@ -74,6 +76,7 @@ class DeviceOut(BaseModel):
     household_id: int
     name: str
     source: str
+    kind: str
     status: str
     last_seen_at: datetime | None
     created_at: datetime
@@ -213,6 +216,7 @@ class MonthOut(BaseModel):
 class DeviceUsageOut(BaseModel):
     device_id: int
     name: str
+    kind: str
     kwh_today: float
     share_pct: float
     is_simulated: bool
@@ -236,14 +240,19 @@ class DashboardOut(BaseModel):
     last_reading_at: datetime | None
     freshness: Literal["live", "recent", "stale", "none"]
     current_power_w: float | None
-    today_kwh: float
+    today_kwh: float           # grid consumption only
     yesterday_kwh: float
+    solar_today_kwh: float = 0.0      # total generation today
+    solar_current_w: float | None = None  # current solar output
+    net_today_kwh: float = 0.0        # consumption - generation (what you drew from grid net)
     cost: CostOut
     month: MonthOut
     devices: list[DeviceUsageOut]
     daily: list[DailyPoint]
+    solar_daily: list[DailyPoint] = []  # per-day generation series
     opportunities: list[OpportunityOut]
     has_simulated_data: bool
+    has_solar: bool = False
 
 
 # ---------- chat ----------
@@ -258,8 +267,18 @@ class ToolCallOut(BaseModel):
     summary: str
 
 
+class McpCallOut(BaseModel):
+    """Records one in-process MCP JSON-RPC call made during a chat turn."""
+    method: str                   # e.g. "tools/list", "tools/call"
+    tool_name: str | None = None  # set when method == "tools/call"
+    protocol: str                 # MCP protocol version used
+    duration_ms: float            # wall-clock time for the dispatch call
+    ok: bool                      # False when the call returned isError or a JSON-RPC error
+
+
 class ChatOut(BaseModel):
     conversation_id: str
     reply: str
     tool_calls: list[ToolCallOut]
+    mcp_calls: list[McpCallOut] = []  # in-process MCP round-trips (proves MCP path)
     provider: str = "ollama"

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     DateTime,
     Double,
     ForeignKey,
@@ -86,6 +87,7 @@ class Device(Base):
     household_id: Mapped[int] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(100))
     source: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(16), default="consumer")  # consumer | generator
     status: Mapped[str] = mapped_column(String(16), default="active")  # active | disabled
     secret_hash: Mapped[str] = mapped_column(String(64))
     last_seen_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
@@ -134,4 +136,57 @@ class ChatMessage(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     role: Mapped[str] = mapped_column(String(16))  # user | assistant
     content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+# ─── OAuth 2.1 tables ────────────────────────────────────────────────────────
+
+class OAuthClient(Base):
+    """Pre-registered OAuth 2.1 client (public or confidential)."""
+    __tablename__ = "oauth_clients"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # client_id
+    name: Mapped[str] = mapped_column(String(200))
+    secret_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # null = public
+    redirect_uris: Mapped[list] = mapped_column(JSON)          # list[str]
+    is_public: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class OAuthCode(Base):
+    """Single-use authorization code (PKCE, 5 min TTL)."""
+    __tablename__ = "oauth_codes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("oauth_clients.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    household_id: Mapped[int] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"))
+    redirect_uri: Mapped[str] = mapped_column(String(2048))
+    scope: Mapped[str] = mapped_column(String(256))
+    resource: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    pkce_challenge: Mapped[str] = mapped_column(String(128))   # S256 challenge (base64url)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    used_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class OAuthToken(Base):
+    """Opaque access + refresh token pair bound to a token family."""
+    __tablename__ = "oauth_tokens"
+    __table_args__ = (
+        Index("ix_oauth_tokens_access", "access_hash"),
+        Index("ix_oauth_tokens_refresh", "refresh_hash"),
+        Index("ix_oauth_tokens_family", "family_id"),
+    )
+    id: Mapped[int] = mapped_column(BigPK, primary_key=True, autoincrement=True)
+    family_id: Mapped[str] = mapped_column(String(36))
+    access_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    refresh_hash: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("oauth_clients.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    household_id: Mapped[int] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"))
+    scope: Mapped[str] = mapped_column(String(256))
+    resource: Mapped[str] = mapped_column(String(2048))   # bound audience
+    access_expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    refresh_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)

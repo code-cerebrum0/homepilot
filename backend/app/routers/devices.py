@@ -59,6 +59,7 @@ def create_device(body: DeviceCreateIn, user: User = Depends(get_current_user), 
         household_id=body.household_id,
         name=body.name,
         source=body.source,
+        kind=body.kind,
         status="active",
         secret_hash=sha256_hex(secret),
     )

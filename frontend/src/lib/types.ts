@@ -3,8 +3,10 @@ export interface Membership { household_id: number; household_name: string; role
 export interface Me { id: number; name: string; email: string; memberships: Membership[] }
 
 export type Freshness = "live" | "recent" | "stale" | "none";
+export type DeviceKind = "consumer" | "generator";
+
 export interface DeviceUsage {
-  device_id: number; name: string; kwh_today: number; share_pct: number;
+  device_id: number; name: string; kind: DeviceKind; kwh_today: number; share_pct: number;
   is_simulated: boolean; status: "active" | "disabled"; last_seen_at: string | null;
 }
 export interface Dashboard {
@@ -14,17 +16,23 @@ export interface Dashboard {
   current_power_w: number | null;
   today_kwh: number;
   yesterday_kwh: number;
+  solar_today_kwh: number;
+  solar_current_w: number | null;
+  net_today_kwh: number;
+  solar_daily: { date: string; kwh: number }[];
   cost: { today: number; month_to_date: number; currency: string; is_estimate: true; basis: string };
   month: { kwh_this_period: number; kwh_previous_period: number };
   devices: DeviceUsage[];
   daily: { date: string; kwh: number }[];
   opportunities: { title: string; detail: string; estimated_monthly_saving_kwh: number | null }[];
   has_simulated_data: boolean;
+  has_solar: boolean;
 }
 
 export interface Device {
   id: number; name: string; household_id: number;
-  source: "simulated" | "smart_plug" | "home_assistant" | "mqtt" | "local_api";
+  kind: DeviceKind;
+  source: "simulated" | "smart_plug" | "home_assistant" | "mqtt" | "local_api" | "solar_inverter";
   status: "active" | "disabled"; last_seen_at: string | null; created_at: string;
 }
 export interface DeviceCreated extends Device { ingestion_secret: string }

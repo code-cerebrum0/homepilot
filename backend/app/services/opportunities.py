@@ -30,6 +30,7 @@ def find_opportunities(db: Session, household_id: int, now: datetime, tz: ZoneIn
             Device.deleted_at.is_(None),
             Device.status == "active",
             Device.source != "simulated",
+            Device.kind == "consumer",   # generators (solar) can't have standby waste
         )
     ).all()
     if not devices:

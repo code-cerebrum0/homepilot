@@ -1,0 +1,254 @@
+
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>HomePilot Demo Script</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.6; color: #1f2328; background: #fff; max-width: 780px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+  h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: .25rem; }
+  .subtitle { color: #57606a; font-size: .9rem; margin-bottom: 2rem; }
+  h2 { font-size: 1rem; font-weight: 700; margin: 2rem 0 .75rem; color: #1f2328; border-bottom: 1px solid #e5e7eb; padding-bottom: .35rem; }
+  .scene { background: #f7f8fa; border: 1px solid #e5e7eb; border-left: 4px solid #3b82d4; border-radius: 6px; padding: 1rem 1.2rem; margin-bottom: 1.2rem; }
+  .scene-header { display: flex; align-items: baseline; gap: .75rem; margin-bottom: .5rem; }
+  .scene-num { background: #3b82d4; color: #fff; font-size: .75rem; font-weight: 700; border-radius: 4px; padding: .1rem .45rem; flex-shrink: 0; }
+  .scene-title { font-weight: 600; font-size: .95rem; }
+  .scene-time { font-size: .8rem; color: #57606a; margin-left: auto; }
+  .narration { margin-bottom: .6rem; }
+  .narration p { margin-bottom: .35rem; }
+  .cue { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; padding: .4rem .7rem; font-size: .82rem; color: #1e40af; margin-top: .5rem; }
+  .cue strong { font-weight: 700; }
+  .code-cue { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px; padding: .4rem .7rem; font-size: .82rem; color: #166534; margin-top: .5rem; }
+  .code-cue strong { font-weight: 700; }
+  .tip { background: #fefce8; border: 1px solid #fde68a; border-radius: 4px; padding: .4rem .7rem; font-size: .82rem; color: #92400e; margin-top: .5rem; }
+  code { font-family: "Cascadia Code", "Fira Code", monospace; font-size: .85em; background: #f0f0f0; padding: .1em .3em; border-radius: 3px; }
+  .sql-block { background: #0d1117; color: #e6edf3; border-radius: 6px; padding: 1.2rem 1.4rem; font-family: "Cascadia Code", "Fira Code", monospace; font-size: .82rem; line-height: 1.7; overflow-x: auto; margin: .75rem 0; white-space: pre; }
+  .sql-kw { color: #ff7b72; }
+  .sql-val { color: #a5d6ff; }
+  .sql-comment { color: #8b949e; }
+  .timeline { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 2rem; }
+  .tl-item { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 4px; padding: .3rem .7rem; font-size: .8rem; }
+  .tl-item span { color: #3b82d4; font-weight: 700; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #e5e7eb; text-align: center; font-size: .75rem; color: #57606a; }
+</style>
+</head>
+<body>
+
+<h1>HomePilot — Hackathon Demo Script</h1>
+<p class="subtitle">Self-hosted MCP server · OAuth 2.1 · Streamable HTTP · No SDK · Alexa+ track</p>
+
+<h2>Timeline overview</h2>
+<div class="timeline">
+  <div class="tl-item"><span>0:00–0:30</span> Hook + what it does</div>
+  <div class="tl-item"><span>0:30–1:00</span> Live dashboard</div>
+  <div class="tl-item"><span>1:00–1:45</span> AI chat (MCP in action)</div>
+  <div class="tl-item"><span>1:45–2:30</span> The MCP server — code tour</div>
+  <div class="tl-item"><span>2:30–3:15</span> OAuth 2.1 flow live</div>
+  <div class="tl-item"><span>3:15–3:45</span> MCP Inspector connect</div>
+  <div class="tl-item"><span>3:45–4:00</span> Wrap-up</div>
+</div>
+
+<h2>Scene-by-scene script</h2>
+
+
+<div class="scene">
+  <div class="scene-header">
+    <span class="scene-num">1</span>
+    <span class="scene-title">Hook — what problem this solves</span>
+    <span class="scene-time">0:00 – 0:30</span>
+  </div>
+  <div class="narration">
+    <p>"Your home uses electricity 24 hours a day, but most people have no idea what's happening — which device is drawing power right now, how today compares to yesterday, or what it's actually costing them."</p>
+    <p>"HomePilot is a self-hosted energy assistant that answers those questions — and it does it through a real MCP server, so any AI client that speaks the Model Context Protocol can connect to it."</p>
+  </div>
+  <div class="cue"><strong>Screen:</strong> Show the frontend dashboard loading — devices, power reading, cost card all visible at once.</div>
+</div>
+
+
+<div class="scene">
+  <div class="scene-header">
+    <span class="scene-num">2</span>
+    <span class="scene-title">Live dashboard walkthrough</span>
+    <span class="scene-time">0:30 – 1:00</span>
+  </div>
+  <div class="narration">
+    <p>"The dashboard shows real-time power draw, today's kilowatt-hours, month-to-date cost based on a configurable tariff, a 7-day trend chart, and a per-device breakdown."</p>
+    <p>"The data comes from devices posting readings to the API — smart plugs, Home Assistant, simulated sensors for demo purposes."</p>
+  </div>
+  <div class="cue"><strong>Screen:</strong> Scroll through dashboard — point at the cost card, the daily chart, the device list. If simulator is on, show a reading arriving live.</div>
+  <div class="tip"><strong>Tip:</strong> Run the server with <code>SIMULATOR_ENABLED=true</code> so readings update during the recording without needing real hardware.</div>
+</div>
+
+
+<div class="scene">
+  <div class="scene-header">
+    <span class="scene-num">3</span>
+    <span class="scene-title">AI chat — MCP in action</span>
+    <span class="scene-time">1:00 – 1:45</span>
+  </div>
+  <div class="narration">
+    <p>"Now here's where the MCP server matters. When I type a question to the built-in assistant, it doesn't call the database directly — it routes through the same MCP dispatcher that an external client like Claude would use."</p>
+    <p>"Watch what happens in the response."</p>
+  </div>
+  <div class="cue"><strong>Screen:</strong> Open chat, type: <em>"How much power am I using right now and what did I use yesterday?"</em> — wait for reply.</div>
+  <div class="narration">
+    <p>"The answer came from real data. But look at the API response — there's an <code>mcp_calls</code> array. It shows that the server made a <code>tools/list</code> call and two <code>tools/call</code> calls, all using protocol version 2026-07-28. That proves the MCP code path ran — not a shortcut."</p>
+  </div>
+  <div class="cue"><strong>Screen:</strong> Open browser DevTools → Network → find the <code>/api/v1/households/.../chat</code> response. Expand <code>mcp_calls</code> in the JSON.</div>
+  <div class="cue"><strong>Screen:</strong> Also show the response header <code>X-MCP-Calls: 3</code> in the headers panel.</div>
+</div>
+
+
+<div class="scene">
+  <div class="scene-header">
+    <span class="scene-num">4</span>
+    <span class="scene-title">Code tour — the MCP server</span>
+    <span class="scene-time">1:45 – 2:30</span>
+  </div>
+  <div class="narration">
+    <p>"Let me show you what's actually under the hood. This MCP server uses <em>no SDK at all</em> — no fastmcp, no modelcontextprotocol package. It's implemented directly against the spec in two files."</p>
+  </div>
+  <div class="code-cue"><strong>Open:</strong> <code>backend/requirements.txt</code> — point at the 13 lines, none of which say mcp or fastmcp.</div>
+  <div class="narration">
+    <p>"First, <code>dispatch.py</code>. This is the JSON-RPC dispatcher. It supports both the modern 2026-07-28 era and legacy 2025-11-25. The era is detected from the <code>_meta</code> field or the <code>MCP-Protocol-Version</code> header."</p>
+  </div>
+  <div class="code-cue"><strong>Open:</strong> <code>backend/app/mcp/dispatch.py</code> lines 28–36 — show <code>MCP_PATH</code>, <code>PROTO_MODERN</code>, <code>SUPPORTED_VERSIONS</code>. Then scroll to lines 144–160 — show the modern-era method dispatch switch.</div>
+  <div class="narration">
+    <p>"Second, <code>tools.py</code>. Each tool is a dataclass with a name, a JSON Schema for input validation, a handler that queries the database, and a text renderer for voice-friendly output. Six tools in total, all read-only."</p>
+  </div>
+  <div class="code-cue"><strong>Open:</strong> <code>backend/app/mcp/tools.py</code> lines 44–66 — show <code>McpTool</code> dataclass and <code>mcp_spec()</code>. Then scroll to lines 338–352 — show the <code>TOOLS</code> registry.</div>
+  <div class="narration">
+    <p>"The HTTP endpoint lives in <code>mcp.py</code>. It handles Origin validation, Bearer token auth, body size limits, era detection, and all four required modern-era headers — <code>MCP-Protocol-Version</code>, <code>Mcp-Method</code>, <code>Mcp-Name</code> — before a single tool runs."</p>
+  </div>
+  <div class="code-cue"><strong>Open:</strong> <code>backend/app/routers/mcp.py</code> lines 102–106 — show the route. Then lines 172–214 — show the header validation block.</div>
+</div>
+
+
+<div class="scene">
+  <div class="scene-header">
+    <span class="scene-num">5</span>
+    <span class="scene-title">OAuth 2.1 flow — live demo</span>
+    <span class="scene-time">2:30 – 3:15</span>
+  </div>
+  <div class="narration">
+    <p>"The MCP spec requires OAuth 2.1 for remote servers. HomePilot ships its own authorization server — the full authorization code flow with PKCE, refresh rotation, token revocation, and RFC 9728 discovery documents. No third-party auth service needed."</p>
+  </div>
+  <div class="cue"><strong>Screen:</strong> Open <code>http://localhost:8000/.well-known/oauth-protected-resource</code> in the browser — show the JSON response with <code>resource</code>, <code>authorization_servers</code>, <code>scopes_supported</code>.</div>
+  <div class="cue"><strong>Screen:</strong> Open <code>http://localhost:8000/.well-known/oauth-authorization-server</code> — show <code>authorization_endpoint</code>, <code>token_endpoint</code>, <code>code_challenge_methods_supported: ["S256"]</code>.</div>
+  <div class="narration">
+    <p>"Any MCP client that follows the spec will hit these discovery endpoints first, find the authorization server, and start the PKCE flow automatically."</p>
+  </div>
+  <div class="code-cue"><strong>Open:</strong> <code>backend/app/routers/oauth.py</code> lines 149–160 — show <code>protected_resource_metadata()</code>. Then lines 195–244 — briefly show PKCE validation in <code>_validate_authorize_params</code>.</div>
+</div>
+
+
+<div class="scene">
+  <div class="scene-header">
+    <span class="scene-num">6</span>
+    <span class="scene-title">MCP Inspector — external client connects</span>
+    <span class="scene-time">3:15 – 3:45</span>
+  </div>
+  <div class="narration">
+    <p>"To prove this is a real, externally-connectable MCP server and not just an internal helper, I'll connect the official MCP Inspector — a tool from Anthropic — to it right now."</p>
+  </div>
+  <div class="cue"><strong>Screen:</strong> Run <code>npx @modelcontextprotocol/inspector</code> in terminal. Set Transport to <em>Streamable HTTP</em>, URL to <code>http://localhost:8000/mcp/v1</code>. Click Connect.</div>
+  <div class="cue"><strong>Screen:</strong> The browser opens the HomePilot login page at <code>/oauth/authorize</code>. Sign in. Inspector receives the token and loads the Tools tab.</div>
+  <div class="narration">
+    <p>"Six tools appear — <code>get_current_usage</code>, <code>get_daily_usage</code>, <code>compare_energy_usage</code>, and so on. I'll call one live."</p>
+  </div>
+  <div class="cue"><strong>Screen:</strong> Click <code>get_current_usage</code> → Run Tool. Show the structured JSON response with <code>current_power_w</code>, <code>today_kwh_so_far</code>, <code>freshness</code>.</div>
+  <div class="narration">
+    <p>"That's a real MCP tools/call over Streamable HTTP, authenticated with OAuth 2.1, returning live household data. No SDK. All spec-compliant."</p>
+  </div>
+</div>
+
+
+<div class="scene">
+  <div class="scene-header">
+    <span class="scene-num">7</span>
+    <span class="scene-title">Wrap-up</span>
+    <span class="scene-time">3:45 – 4:00</span>
+  </div>
+  <div class="narration">
+    <p>"HomePilot is a full-stack energy monitoring platform with a self-hosted MCP server built directly on the spec — no SDK, dual protocol era support, complete OAuth 2.1, and 50 passing tests. The link to the repo is in the description."</p>
+  </div>
+  <div class="cue"><strong>Screen:</strong> Show the terminal with <code>pytest tests/ -v</code> output — 50 passed.</div>
+</div>
+
+<h2>MySQL seed data</h2>
+<p style="margin-bottom:.75rem;color:#57606a;font-size:.88rem">Run this against your <code>homepilot</code> database after the server has started (tables are auto-created on first boot). Replace the Argon2 hash below with a real one or register via the API instead.</p>
+
+<div class="sql-block"><span class="sql-comment">-- ─────────────────────────────────────────────────────────────────────────────
+-- HomePilot demo seed data
+-- Run: mysql -u homepilot -p homepilot &lt; seed.sql
+-- ─────────────────────────────────────────────────────────────────────────────</span>
+
+<span class="sql-comment">-- 1. User  (password = Demo@password1 — generate real hash via the /auth/register API)</span>
+<span class="sql-kw">INSERT INTO</span> users (name, email, password_hash, created_at) <span class="sql-kw">VALUES</span>
+  (<span class="sql-val">'Demo User'</span>, <span class="sql-val">'demo@homepilot.local'</span>, <span class="sql-val">'REPLACE_WITH_ARGON2_HASH'</span>, NOW());
+
+<span class="sql-comment">-- 2. Household</span>
+<span class="sql-kw">INSERT INTO</span> households (name, created_at) <span class="sql-kw">VALUES</span>
+  (<span class="sql-val">'Demo Home'</span>, NOW());
+
+<span class="sql-comment">-- 3. Membership  (owner role)</span>
+<span class="sql-kw">INSERT INTO</span> memberships (user_id, household_id, role) <span class="sql-kw">VALUES</span>
+  (1, 1, <span class="sql-val">'owner'</span>);
+
+<span class="sql-comment">-- 4. Tariff  (flat ₹8/kWh, 18% GST)</span>
+<span class="sql-kw">INSERT INTO</span> tariffs (household_id, name, currency, type, flat_rate_per_kwh, fixed_monthly_charge, tax_percent) <span class="sql-kw">VALUES</span>
+  (1, <span class="sql-val">'Home Tariff'</span>, <span class="sql-val">'INR'</span>, <span class="sql-val">'flat'</span>, 8.0, 150.0, 18.0);
+
+<span class="sql-comment">-- 5. Devices</span>
+<span class="sql-kw">INSERT INTO</span> devices (household_id, name, source, status, secret_hash, created_at) <span class="sql-kw">VALUES</span>
+  (1, <span class="sql-val">'Air Conditioner'</span>,  <span class="sql-val">'simulated'</span>, <span class="sql-val">'active'</span>, <span class="sql-val">'demo-secret-hash-1'</span>, NOW()),
+  (1, <span class="sql-val">'Refrigerator'</span>,     <span class="sql-val">'simulated'</span>, <span class="sql-val">'active'</span>, <span class="sql-val">'demo-secret-hash-2'</span>, NOW()),
+  (1, <span class="sql-val">'Water Heater'</span>,     <span class="sql-val">'simulated'</span>, <span class="sql-val">'active'</span>, <span class="sql-val">'demo-secret-hash-3'</span>, NOW()),
+  (1, <span class="sql-val">'Washing Machine'</span>,  <span class="sql-val">'simulated'</span>, <span class="sql-val">'active'</span>, <span class="sql-val">'demo-secret-hash-4'</span>, NOW()),
+  (1, <span class="sql-val">'Lighting'</span>,         <span class="sql-val">'simulated'</span>, <span class="sql-val">'active'</span>, <span class="sql-val">'demo-secret-hash-5'</span>, NOW());
+
+<span class="sql-comment">-- 6. Readings — 30 days of hourly simulated data (device_id 1 = AC, highest draw)
+--    Generates ~720 rows per device = 3600 rows total. Adjust the date range as needed.</span>
+<span class="sql-kw">INSERT INTO</span> readings (device_id, measured_at, ingested_at, power_w, energy_kwh, interval_seconds, is_simulated)
+<span class="sql-kw">WITH</span> RECURSIVE ts (t) <span class="sql-kw">AS</span> (
+  <span class="sql-kw">SELECT</span> DATE_SUB(NOW(), <span class="sql-kw">INTERVAL</span> 30 <span class="sql-kw">DAY</span>)
+  <span class="sql-kw">UNION ALL</span>
+  <span class="sql-kw">SELECT</span> t + <span class="sql-kw">INTERVAL</span> 1 <span class="sql-kw">HOUR</span> <span class="sql-kw">FROM</span> ts <span class="sql-kw">WHERE</span> t &lt; NOW()
+)
+<span class="sql-kw">SELECT</span>
+  d.id                                           <span class="sql-kw">AS</span> device_id,
+  ts.t                                           <span class="sql-kw">AS</span> measured_at,
+  NOW()                                          <span class="sql-kw">AS</span> ingested_at,
+  <span class="sql-kw">CASE</span> d.id
+    <span class="sql-kw">WHEN</span> 1 <span class="sql-kw">THEN</span> 1400 + (RAND() * 300)   <span class="sql-comment">-- AC: 1400–1700 W</span>
+    <span class="sql-kw">WHEN</span> 2 <span class="sql-kw">THEN</span>  120 + (RAND() *  30)   <span class="sql-comment">-- Fridge: 120–150 W</span>
+    <span class="sql-kw">WHEN</span> 3 <span class="sql-kw">THEN</span> 2000 + (RAND() * 500)   <span class="sql-comment">-- Water heater: 2000–2500 W</span>
+    <span class="sql-kw">WHEN</span> 4 <span class="sql-kw">THEN</span>  400 + (RAND() * 100)   <span class="sql-comment">-- Washing machine: 400–500 W</span>
+    <span class="sql-kw">ELSE</span>         60 + (RAND() *  40)    <span class="sql-comment">-- Lighting: 60–100 W</span>
+  <span class="sql-kw">END</span>                                            <span class="sql-kw">AS</span> power_w,
+  <span class="sql-kw">CASE</span> d.id
+    <span class="sql-kw">WHEN</span> 1 <span class="sql-kw">THEN</span> (1400 + (RAND() * 300))  / 1000
+    <span class="sql-kw">WHEN</span> 2 <span class="sql-kw">THEN</span> ( 120 + (RAND() *  30))  / 1000
+    <span class="sql-kw">WHEN</span> 3 <span class="sql-kw">THEN</span> (2000 + (RAND() * 500))  / 1000
+    <span class="sql-kw">WHEN</span> 4 <span class="sql-kw">THEN</span> ( 400 + (RAND() * 100))  / 1000
+    <span class="sql-kw">ELSE</span>        (  60 + (RAND() *  40))  / 1000
+  <span class="sql-kw">END</span>                                            <span class="sql-kw">AS</span> energy_kwh,
+  3600                                           <span class="sql-kw">AS</span> interval_seconds,
+  1                                              <span class="sql-kw">AS</span> is_simulated
+<span class="sql-kw">FROM</span> ts <span class="sql-kw">CROSS JOIN</span> devices d
+<span class="sql-kw">WHERE</span> d.household_id = 1;
+
+<span class="sql-comment">-- 7. OAuth client for MCP Inspector</span>
+<span class="sql-kw">INSERT INTO</span> oauth_clients (id, name, secret_hash, redirect_uris, is_public, created_at) <span class="sql-kw">VALUES</span>
+  (<span class="sql-val">'mcp-inspector'</span>, <span class="sql-val">'MCP Inspector'</span>, NULL,
+   JSON_ARRAY(<span class="sql-val">'https://inspector.modelcontextprotocol.io/callback'</span>),
+   1, NOW());
+</div>
+
+<p style="color:#57606a;font-size:.85rem;margin-top:.5rem">
+  <strong>Note on the user password:</strong> Don't insert a raw Argon2 hash manually — it's easier to register via the API first (<code>POST /api/v1/auth/register</code>), which creates the user + household + membership automatically, then run only the tariff, devices, and readings inserts above with the correct IDs.
+</p>
+
+<footer>Made with IBM Bob</footer>
+</body>
+</html>
