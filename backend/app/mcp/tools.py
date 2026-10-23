@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Device
 from app.services import usage
+from app.services.anomaly import find_anomalies
 from app.services.dashboard import build_dashboard
 from app.utils import iso_z, local_midnight
 
@@ -381,34 +382,41 @@ def _solar_generation_text(data: dict) -> str:
 
 
 def _opportunities(ctx: ToolContext, _: dict) -> dict:
-    d = build_dashboard(ctx.db, ctx.household_id, 7, ctx.now)
-    if not d.opportunities:
-        return {
-            "has_data": False,
-            "checked": "overnight standby (02:00–05:00, >50 W, on ≥3 of last 7 nights)",
-            "interpretation": (
-                "No device was found drawing significant power overnight on most nights. "
-                "This check does not cover daytime usage or overall consumption levels."
-            ),
-        }
-    return {"has_data": True, "opportunities": [o.model_dump() for o in d.opportunities]}
+    from app.services.opportunities import find_opportunities
+    opp = find_opportunities(ctx.db, ctx.household_id, ctx.now, ctx.tz)
+    return {
+        "status": opp.status,
+        "has_data": opp.status == "ok" and bool(opp.opportunities),
+        "opportunities": [o.model_dump() for o in opp.opportunities],
+        "checked_rules": opp.checked_rules,
+        "nights_with_data": opp.nights_with_data,
+        "analysis_message": opp.message,
+    }
 
 
 def _opportunities_text(data: dict) -> str:
-    if not data.get("has_data"):
-        return (
-            "No overnight standby waste was detected (checked for devices drawing >50 W "
-            "between 02:00–05:00 on at least 3 of the last 7 nights). "
-            + data.get("interpretation", "")
-        )
+    status = data.get("status", "ok")
+    msg = data.get("analysis_message", "")
     ops = data.get("opportunities", [])
+
+    if status == "insufficient_data":
+        return f"Insufficient data for savings analysis. {msg}"
+    if status == "error":
+        return f"Savings analysis failed. {msg}"
+
+    # status == "ok"
     if not ops:
-        return "No savings opportunities were found."
+        rules = "; ".join(data.get("checked_rules", []))
+        base = f"No savings opportunities were found. Checked: {rules}. {msg}"
+        return base.strip()
+
     first = ops[0]
     rest = len(ops) - 1
     base = first.get("title", "an opportunity") + ". " + first.get("detail", "")
     if rest > 0:
         base += f" There are {rest} more suggestion{'s' if rest > 1 else ''} in the full results."
+    if msg:
+        base += f" {msg}"
     return base.strip()
 
 
@@ -526,6 +534,77 @@ def _household_context_text(data: dict) -> str:
     )
 
 
+# ─── Anomaly detection ────────────────────────────────────────────────────────
+
+def _usage_anomalies(ctx: ToolContext, a: dict) -> dict:
+    """Detect anomalous daily consumption using median + MAD baseline."""
+    analysis_days = a.get("analysis_days", 7)
+    history_days = a.get("history_days", 30)
+    result = find_anomalies(
+        ctx.db, ctx.household_id, ctx.now, ctx.tz,
+        analysis_days=analysis_days,
+        history_days=history_days,
+    )
+    out: dict = {
+        "status": result.status,
+        "analysis_period_days": result.analysis_period_days,
+        "baseline_days_used": result.baseline_days_used,
+        "baseline_median_kwh": result.baseline_median_kwh,
+        "baseline_mad_kwh": result.baseline_mad_kwh,
+        "reading_coverage_pct": result.reading_coverage_pct,
+        "findings": [
+            {
+                "date": f.date,
+                "device_name": f.device_name,
+                "observed_kwh": f.observed_kwh,
+                "baseline_median_kwh": f.baseline_median_kwh,
+                "deviation_mad": f.deviation_mad,
+                "direction": f.direction,
+                "confirmed": f.confirmed,
+                "explanation": f.explanation,
+            }
+            for f in result.findings
+        ],
+        "analysis_message": result.message,
+    }
+    return out
+
+
+def _usage_anomalies_text(data: dict) -> str:
+    status = data.get("status", "ok")
+    msg = data.get("analysis_message", "")
+
+    if status == "insufficient_data":
+        return f"Insufficient data for anomaly analysis. {msg}"
+    if status == "error":
+        return f"Anomaly analysis failed. {msg}"
+
+    findings = data.get("findings", [])
+    if not findings:
+        return msg or "No anomalies detected in the analysis period."
+
+    confirmed = [f for f in findings if f.get("confirmed")]
+    borderline = [f for f in findings if not f.get("confirmed")]
+
+    parts = []
+    if confirmed:
+        parts.append(
+            f"{len(confirmed)} confirmed anomal{'ies' if len(confirmed) != 1 else 'y'}: "
+            + "; ".join(f["explanation"] for f in confirmed[:2])
+        )
+        if len(confirmed) > 2:
+            parts.append(f"...and {len(confirmed) - 2} more confirmed.")
+    if borderline:
+        parts.append(
+            f"{len(borderline)} borderline observation{'s' if len(borderline) != 1 else ''} "
+            f"(below the statistical confirmation threshold): "
+            + "; ".join(f["explanation"] for f in borderline[:2])
+        )
+    if msg:
+        parts.append(msg)
+    return " ".join(parts)
+
+
 # ─── Tool registry ────────────────────────────────────────────────────────────
 
 TOOLS: dict[str, McpTool] = {
@@ -535,8 +614,10 @@ TOOLS: dict[str, McpTool] = {
             name="get_current_usage",
             title="Current Power Usage",
             description=(
-                "Get the household's current power draw in watts and the energy "
-                "consumed so far today in kilowatt-hours."
+                "Get the household's current power draw in watts and the energy consumed "
+                "so far today in kilowatt-hours. Use for: 'how much power right now', "
+                "'what is the current consumption', 'is anything on'. "
+                "Do NOT use for historical usage, anomalies, or savings analysis."
             ),
             input_schema=_empty_schema(),
             handler=_current_usage,
@@ -547,7 +628,10 @@ TOOLS: dict[str, McpTool] = {
             title="Daily Energy Usage",
             description=(
                 "Get the energy used (kWh) per day for the last N days, "
-                "with the total, average, and the highest-usage day."
+                "with the total, average, and the highest-usage day. "
+                "Use for: 'how much did we use this week', 'show me the last 14 days', "
+                "'historical consumption'. "
+                "For anomaly/spike detection use get_usage_anomalies instead."
             ),
             input_schema={
                 "type": "object",
@@ -569,8 +653,11 @@ TOOLS: dict[str, McpTool] = {
             name="compare_energy_usage",
             title="Compare Energy Usage",
             description=(
-                "Compare energy use between two periods and return the difference "
-                "and percent change. Weeks are rolling 7-day windows."
+                "Compare energy use between two periods (today vs yesterday, "
+                "this week vs last week, this month vs last month) and return the "
+                "difference and percent change. "
+                "Use for: 'was yesterday higher than the day before', 'compare this week to last week', "
+                "'why was last month more expensive'."
             ),
             input_schema={
                 "type": "object",
@@ -596,7 +683,10 @@ TOOLS: dict[str, McpTool] = {
             title="Device Energy Breakdown",
             description=(
                 "Get the energy used per device (kWh and share of total) "
-                "for a chosen period."
+                "for a chosen period (today, last_7_days, this_month). "
+                "Use for: 'which appliance uses the most', 'device breakdown', "
+                "'what is consuming the most electricity'. "
+                "Also useful alongside savings and anomaly tools to identify the responsible device."
             ),
             input_schema={
                 "type": "object",
@@ -619,7 +709,9 @@ TOOLS: dict[str, McpTool] = {
             description=(
                 "Get the estimated electricity cost for today and the month to date, "
                 "using the household's configured tariff. For households with solar, "
-                "cost is calculated on net grid consumption after solar offset."
+                "cost is calculated on net grid consumption after solar offset. "
+                "Use for: 'how much does it cost', 'what is my bill', 'electricity expense'. "
+                "Always call get_tariff_info first if tariff context is needed."
             ),
             input_schema=_empty_schema(),
             handler=_cost,
@@ -628,7 +720,15 @@ TOOLS: dict[str, McpTool] = {
         McpTool(
             name="get_savings_opportunities",
             title="Savings Opportunities",
-            description="Get energy-saving opportunities detected from the recorded readings.",
+            description=(
+                "Get energy-saving opportunities detected from recorded readings. "
+                "Currently checks for devices drawing significant power overnight (02:00–05:00). "
+                "Returns status: 'ok' (analysis ran), 'insufficient_data' (not enough history), "
+                "or 'error'. An empty opportunities list means the overnight standby check found "
+                "nothing — it does NOT mean the household is energy-efficient overall. "
+                "Use for: 'how to reduce my bill', 'what can I turn off', 'wasteful appliances'. "
+                "Do NOT use for anomaly/spike detection — use get_usage_anomalies for that."
+            ),
             input_schema=_empty_schema(),
             handler=_opportunities,
             label_fn=lambda _: "savings opportunities",
@@ -656,6 +756,43 @@ TOOLS: dict[str, McpTool] = {
             },
             handler=_solar_generation,
             label_fn=lambda a: f"solar generation last {a.get('days')} days",
+        ),
+        McpTool(
+            name="get_usage_anomalies",
+            title="Usage Anomaly Detection",
+            description=(
+                "Detect statistically anomalous daily consumption using a median + MAD "
+                "(Median Absolute Deviation) baseline. "
+                "Returns confirmed anomalies (≥3 MAD from median) and borderline observations. "
+                "Use for: 'abnormal usage', 'unusual consumption', 'spike in electricity', "
+                "'why was yesterday so high', 'detect unexpected usage'. "
+                "Do NOT use get_savings_opportunities for anomaly questions. "
+                "Returns status: 'ok', 'insufficient_data' (needs ≥7 baseline days), or 'error'."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "analysis_days": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 14,
+                        "description": "Number of recent complete days to check for anomalies (default 7).",
+                    },
+                    "history_days": {
+                        "type": "integer",
+                        "minimum": 14,
+                        "maximum": 90,
+                        "description": (
+                            "Total historical window in days used to build the baseline "
+                            "(default 30; must be at least analysis_days + 7)."
+                        ),
+                    },
+                },
+                "required": [],
+                "additionalProperties": False,
+            },
+            handler=_usage_anomalies,
+            label_fn=lambda a: f"anomaly analysis last {a.get('analysis_days', 7)} days",
         ),
         McpTool(
             name="get_tariff_info",
@@ -695,6 +832,7 @@ _TEXT_RENDERERS: dict[str, Callable[[dict], str]] = {
     "get_solar_generation": _solar_generation_text,
     "get_tariff_info": _tariff_info_text,
     "get_household_context": _household_context_text,
+    "get_usage_anomalies": _usage_anomalies_text,
 }
 
 

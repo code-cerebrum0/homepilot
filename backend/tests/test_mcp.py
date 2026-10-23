@@ -414,6 +414,7 @@ def test_modern_tools_list(client):
         "get_solar_generation",
         "get_tariff_info",
         "get_household_context",
+        "get_usage_anomalies",
     }
     for t in tools:
         assert t["annotations"]["readOnlyHint"] is True
@@ -619,7 +620,7 @@ def test_legacy_initialize_tools_list_call(client):
                      headers={**bearer, "MCP-Protocol-Version": PROTO_LEGACY})
     assert r2.status_code == 200
     tools = r2.json()["result"]["tools"]
-    assert len(tools) == 9
+    assert len(tools) == 10
 
     # tools/call
     r3 = client.post("/mcp/v1",

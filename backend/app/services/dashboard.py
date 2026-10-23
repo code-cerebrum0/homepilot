@@ -134,6 +134,8 @@ def build_dashboard(db: Session, household_id: int, days: int, now: datetime | N
         if has_solar else []
     )
 
+    opp_result = find_opportunities(db, household_id, now, tz)
+
     return DashboardOut(
         as_of=now,
         last_reading_at=last,
@@ -149,7 +151,11 @@ def build_dashboard(db: Session, household_id: int, days: int, now: datetime | N
         devices=devices_out,
         daily=daily,
         solar_daily=solar_daily,
-        opportunities=find_opportunities(db, household_id, now, tz),
+        opportunities=opp_result.opportunities,
+        opportunities_status=opp_result.status,
+        opportunities_message=opp_result.message,
+        opportunities_checked_rules=opp_result.checked_rules,
+        opportunities_nights_with_data=opp_result.nights_with_data,
         has_simulated_data=any(d.is_simulated for d in devices_out),
         has_solar=has_solar,
     )

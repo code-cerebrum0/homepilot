@@ -251,6 +251,10 @@ class DashboardOut(BaseModel):
     daily: list[DailyPoint]
     solar_daily: list[DailyPoint] = []  # per-day generation series
     opportunities: list[OpportunityOut]
+    opportunities_status: Literal["ok", "insufficient_data", "error"] = "ok"
+    opportunities_message: str = ""
+    opportunities_checked_rules: list[str] = []
+    opportunities_nights_with_data: int = 0
     has_simulated_data: bool
     has_solar: bool = False
 
